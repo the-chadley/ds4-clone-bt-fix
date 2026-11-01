@@ -56,9 +56,12 @@ sudo dnf builddep -y kernel  # pulls kernel build deps when a source repo is ena
 
 ## Status / KNOWN trade-offs
 
-- Dropped `policy` plugin: profile auto-connect logic for *audio* devices
-  (headset reconnect) is also disabled. `bluetoothctl` manual connections
-  still work. Fine for a desktop PC, consider before laptops with BT audio.
+- Dropped `policy` plugin: audio *devices that self-reconnect still work*;
+  only host-initiated re-dial of dropped audio streams is disabled (i.e. if
+  a headset *expects the PC to call it back* after range loss / suspend,
+  you'll need a manual connect). Rare; matters mostly on laptops with BT
+  headsets after suspend. Manual `bluetoothctl connect` / desktop applet
+  still work.
 - `ClassicBondedOnly=false`: connection-level security is relaxed — inbound
   gamepads may not force encryption. This matches pre-2023 upstream behavior.
 - The kernel module changes Bluetooth system-wide. Rebuild it after every
