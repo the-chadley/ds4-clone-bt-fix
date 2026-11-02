@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""ds4led — DS4 clone lightbar control (kernel LED path)
+
+Usage:
+  ds4led list                       show connected pads (MAC, colour, battery)
+  ds4led <name|MAC prefix|all> <colour|hex>   set lightbar colour
+Colours: red green blue yellow orange cyan magenta purple white off
+Or 6-digit hex like ff4500. Requires root (run via sudo).
+"""
+import sys, os, glob
+
+NAMES = {'red':'FF0000','green':'00FF00','blue':'0000FF','yellow':'FFFF00',
+         'orange':'FF6600','cyan':'00FFFF','magenta':'FF00FF','purple':'8000FF',
+         'pink':'FF4FA0','white':'FFFFFF','off':'000000'}
+
+def pads():
+    """Return [(uniq, 'inputNN')] for every DS4 lightbar connected."""
+    out = []
+    for led in glob.glob('/sys/class/leds/input*:red'):
+        base = os.path.basename(led).split(':')[0]        # e.g. input45
+        g = f'/sys/class/leds/{base}:green'
+        b = f'/sys/class/leds/{base}:blue'
+        if not (os.path.exists(g) and os.path.exists(b)):
+            continue
+        # resolve LED device -> HID parent -> matching input dir with uniq
+        try:
+            dev = os.path.realpath(f'/sys/class/leds/{base}:red/device')
+            uniq = open(f'{dev}/input/{base}/uniq').read().strip()
+        except OSError:
+            uniq = ''
+        out.append((uniq, base))
+    return sorted(out, key=lambda t: (t[1],))
+
+def colour(arg):
+    a = arg.lower()
+    h = NAMES.get(a, a)
+    if len(h) == 6 and all(c in '0123456789abcdefABCDEF' for c in h):
+        return h
+    print(f"unknown colour: {arg}"); sys.exit(2)
+
+def setrgb(d, hexcol):
+    r, g, b = int(hexcol[0:2],16), int(hexcol[2:4],16), int(hexcol[4:6],16)
+    for ch, val in (('red', r), ('green', g), ('blue', b)):
+        with open(f'/sys/class/leds/{d}:{ch}/brightness', 'w') as f:
+            f.write(str(val))
+
+def show(d):
+    rgb = []
+    for ch in ('red', 'green', 'blue'):
+        try:
+            rgb.append(int(open(f'/sys/class/leds/{d}:{ch}/brightness').read().strip()))
+        except OSError:
+            rgb.append('?')
+    print(f"  {d}  RGB={rgb}")
+
+def main(argv):
+    if not argv or argv[0] == 'list':
+        print("connected DS4 pads:")
+        for uniq, d in pads():
+            print(f"  {uniq or '?'}")
+            show(d)
+        return 0
+    if not os.geteuid() == 0:
+        print("writing needs root: run with sudo"); return 1
+    target, colour_arg = argv[0], argv[1]
+    h = colour(colour_arg)
+    hits = []
+    for uniq, d in pads():
+        if target == 'all' or (uniq and uniq.upper().startswith(target.upper())):
+            hits.append((uniq, d))
+    if not hits:
+        print("no matching pad connected (run 'ds4led list')"); return 1
+    for uniq, d in hits:
+        setrgb(d, h)
+        print(f"set {uniq} -> {h}")
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

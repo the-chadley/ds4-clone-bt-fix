@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""ds4-fullmode — switch DS4 (clone) pads into the full Bluetooth report.
+
+Clone DS4 pads connect over Bluetooth sending the minimal 10-byte report
+0x01: sticks, buttons and triggers only, no touchpad or motion data. A
+genuine DS4 switches to the full 0x11 report when the kernel reads its
+calibration (feature report 0x05) at probe time, but clones ignore that
+read. Reading feature report 0x02 switches them, which is also what Steam
+does. After the switch, the touchpad works for the desktop (libinput),
+Steam, games and ds4-tester.
+
+Usage:
+  ds4-fullmode                 switch every connected DS4 hidraw node
+  ds4-fullmode /dev/hidrawN    switch one node (what the udev rule runs)
+
+Run from 70-ds4-tester.rules on every Bluetooth connect. Harmless on a
+pad that is already in full mode.
+"""
+import fcntl
+import glob
+import os
+import sys
+import time
+
+FEATURE_CALIBRATION = 0x02
+LENGTH = 37
+
+
+def hidiocgfeature(n):
+    return (3 << 30) | (n << 16) | (ord('H') << 8) | 0x07
+
+
+def ds4_nodes():
+    nodes = []
+    for uevent in glob.glob('/sys/class/hidraw/hidraw*/device/uevent'):
+        text = open(uevent).read()
+        if 'DRIVER=playstation' in text and '0000054C' in text.upper():
+            nodes.append('/dev/' + uevent.split('/')[4])
+    return sorted(nodes)
+
+
+def switch(node):
+    buf = bytearray(LENGTH)
+    buf[0] = FEATURE_CALIBRATION
+    fd = os.open(node, os.O_RDWR)
+    try:
+        fcntl.ioctl(fd, hidiocgfeature(LENGTH), buf, True)
+    finally:
+        os.close(fd)
+
+
+def main():
+    nodes = sys.argv[1:] or ds4_nodes()
+    if sys.argv[1:]:
+        # from udev: hidraw appears early in the driver's probe, so let it
+        # finish its own feature reads first
+        time.sleep(1.0)
+    status = 0
+    for node in nodes:
+        for attempt in range(3):
+            try:
+                switch(node)
+                print(f'{node}: full report mode requested')
+                break
+            except OSError as e:
+                if attempt == 2:
+                    print(f'{node}: failed: {e.strerror}', file=sys.stderr)
+                    status = 1
+                else:
+                    time.sleep(0.5)
+    if not nodes:
+        print('no DS4 hidraw nodes found', file=sys.stderr)
+        status = 1
+    return status
+
+
+if __name__ == '__main__':
+    sys.exit(main())

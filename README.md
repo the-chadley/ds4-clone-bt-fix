@@ -11,6 +11,10 @@ bluez 5.87+git and kernel 7.2.x).
 | `ds4-clone-l2cap-pending.patch` | One-line-hunk patch to `net/bluetooth/l2cap_core.c`: don't hard-`SEC_BLOCK` inbound L2CAP channels when auth/encryption is merely *in flight* — let the existing BT_CONNECT2 / `l2cap_conn_start()` pending flow answer `Pending`, then auto-complete with `Success` once the link is encrypted. |
 | `build-bluetooth-module.sh` | End-to-end script: fetches the kernel source RPM matching your running kernel, applies the patch, rebuilds only `bluetooth.ko`, installs it. Run after every kernel update. |
 | `DS4-clone-BT-fix-notes.md` | Full root-cause analysis and the complete change/rollback inventory. |
+| `ds4-ctl/ds4-tester.py` | Steam-style GUI tester: live button/stick/trigger/touchpad view, lightbar colours, rumble test, per-MAC pad names. Needs `python3-evdev` and `python3-cairo`. |
+| `ds4-ctl/ds4-fullmode` | Switches clone pads from the minimal Bluetooth report to the full one, which turns the touchpad (and motion) on. See below. |
+| `ds4-ctl/70-ds4-tester.rules` | udev rules: runs `ds4-fullmode` on every Bluetooth connect, and gives the desktop user access to the touchpad and lightbar LEDs. |
+| `ds4-ctl/ds4led` | Command-line lightbar colour tool. |
 
 ## The short diagnosis
 
@@ -53,6 +57,53 @@ sudo dnf builddep -y kernel  # pulls kernel build deps when a source repo is ena
 
 # 4. Pair/power-cycle the pad (hold PS ~10 s to fully power off, then PS)
 ```
+
+## Touchpad dead on clones (minimal report mode)
+
+Once they reconnect reliably, the clones have a second quirk. Over Bluetooth
+they keep sending the **minimal 10-byte input report `0x01`**: sticks, buttons
+and triggers, but **no touchpad and no motion data**. The touchpad stops
+moving the desktop pointer, games don't see it, and even clicking it does
+nothing.
+
+A genuine DS4 switches to the full `0x11` report when the host reads a
+calibration feature report. The kernel's `hid-playstation` reads feature
+report `0x05` at probe time, and **clones ignore that**. They do switch when
+**feature report `0x02`** is read. Steam does that read, which is why the
+touchpad sometimes works while Steam is running and sometimes doesn't.
+
+You can check which mode a pad is in by reading a few reports from its hidraw
+node: first byte `0x01` with 10-byte reports means minimal mode, `0x11` with
+78-byte reports means full mode.
+
+The fix is to read feature `0x02` on every connect:
+
+```bash
+cd ds4-ctl
+sudo install -m 0755 ds4-fullmode /usr/local/bin/ds4-fullmode
+sudo cp 70-ds4-tester.rules /etc/udev/rules.d/
+sudo udevadm control --reload
+sudo udevadm trigger --action=change --subsystem-match=input --subsystem-match=leds
+sudo ds4-fullmode          # pads that are already connected
+```
+
+The same rules file lets the logged-in user read the touchpad and set the
+lightbar without root, so `ds4-tester.py` runs fully without `sudo`. (The
+tester also sends the `0x02` read itself when it opens a pad.)
+
+## Tester
+
+```bash
+python3 ds4-ctl/ds4-tester.py          # GUI
+python3 ds4-ctl/ds4-tester.py --list   # just list connected pads
+```
+
+- Every control lights up on the drawing as you press it, and the panels
+  below show raw trigger, stick and touchpad values.
+- Click the pad's name to rename it. Names are remembered per MAC address in
+  `~/.config/ds4-tester/names.json`.
+- **Rumble** runs the strong (left) motor, then the weak (right) motor.
+- **Identify** flashes the lightbar so you can tell which pad is which.
 
 ## Status / KNOWN trade-offs
 

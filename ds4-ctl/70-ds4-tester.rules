@@ -1,0 +1,27 @@
+# udev rules for ds4-tester: let the logged-in desktop user use the whole
+# DS4 (and DS4 clone) controller without sudo.
+#
+# Install (from this directory):
+#   sudo install -m 0755 ds4-fullmode /usr/local/bin/ds4-fullmode
+#   sudo cp 70-ds4-tester.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+#   sudo udevadm trigger --action=change --subsystem-match=input --subsystem-match=leds
+#   sudo ds4-fullmode        # already-connected pads; new connects are automatic
+#
+# Remove: sudo rm /etc/udev/rules.d/70-ds4-tester.rules /usr/local/bin/ds4-fullmode,
+# then reload as above.
+
+# Clone pads connect over Bluetooth in the minimal report (no touchpad or
+# motion data); ds4-fullmode reads feature report 0x02 to switch them to the
+# full report. 0005 = Bluetooth bus; over USB they already send full reports.
+ACTION=="add", SUBSYSTEM=="hidraw", KERNELS=="0005:054C:09CC.*", DRIVERS=="playstation", RUN+="/usr/local/bin/ds4-fullmode /dev/%k"
+
+# Touchpad event node. Fedora already grants the gamepad node to the seat user
+# via "uaccess"; the touchpad isn't tagged as a joystick so it misses out.
+# Must sort before 73-seat-late.rules, which applies uaccess ACLs.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="054c", ATTRS{name}=="*Touchpad", TAG+="uaccess"
+
+# Lightbar LEDs (/sys/class/leds/inputNN:red|green|blue), playstation driver only.
+# sysfs attributes can't take ACLs, so make brightness writable by anyone;
+# the worst a local user can do with it is change a controller's colour.
+SUBSYSTEM=="leds", KERNEL=="input*:red|input*:green|input*:blue", DRIVERS=="playstation", RUN+="/usr/bin/chmod 0666 /sys%p/brightness"
