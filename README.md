@@ -40,8 +40,15 @@ the kernel patch.
 
 ## TL;DR install (Fedora)
 
+Everything, in order, on a fresh install. Steps 1–4 fix reconnecting, 5 turns
+the touchpad on, and 6–7 are the tester. Run from a clone of this repo:
+
 ```bash
+git clone https://github.com/the-chadley/ds4-clone-bt-fix.git
+cd ds4-clone-bt-fix
+
 # 1. bluez daemon: exclude the policy plugin (creates the outbound race)
+sudo mkdir -p /etc/systemd/system/bluetooth.service.d
 sudo tee /etc/systemd/system/bluetooth.service.d/override.conf >/dev/null <<'EOF'
 [Service]
 ExecStart=
@@ -51,14 +58,31 @@ sudo systemctl daemon-reload
 
 # 2. Lower the HID server security bar
 sudo sed -i 's/^#ClassicBondedOnly.*/ClassicBondedOnly=false/' /etc/bluetooth/input.conf
+sudo systemctl restart bluetooth
 
-# 3. Patched bluetooth.ko (kernel side)
+# 3. Patched bluetooth.ko (kernel side). Re-run after every kernel update.
 sudo dnf install -y rpm-build rpmdevtools
 sudo dnf builddep -y kernel  # pulls kernel build deps when a source repo is enabled
 ./build-bluetooth-module.sh
 
 # 4. Pair/power-cycle the pad (hold PS ~10 s to fully power off, then PS)
+
+# 5. Touchpad + lightbar: full-report switch on connect, user access via udev
+sudo install -m 0755 ds4-ctl/ds4-fullmode /usr/local/bin/ds4-fullmode
+sudo cp ds4-ctl/70-ds4-tester.rules /etc/udev/rules.d/
+sudo udevadm control --reload
+sudo udevadm trigger --action=change --subsystem-match=input --subsystem-match=leds
+sudo ds4-fullmode
+
+# 6. Tester dependencies
+sudo dnf install -y python3-evdev python3-cairo python3-tkinter
+
+# 7. Tester in the System menu + lightbar colour restore (per user, no sudo)
+ds4-ctl/install-user.sh
 ```
+
+On a reinstall, `~/.config/ds4-tester/pads.json` holds your pad names and
+colours. Copy it across if you want to keep them.
 
 ## Touchpad dead on clones (minimal report mode)
 
