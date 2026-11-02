@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""ds4-lightbar-restore — put each DS4 pad's last chosen lightbar colour back.
+
+The kernel resets the lightbar to its default player colour on every
+connect. ds4-tester saves the colour you pick per MAC in
+~/.config/ds4-tester/pads.json; this reapplies it.
+
+Usage:
+  ds4-lightbar-restore              every connected pad
+  ds4-lightbar-restore hidrawN      one pad (what the systemd unit runs)
+
+Runs as the desktop user from ds4-lightbar@.service, which udev starts on
+connect (see 70-ds4-tester.rules). It needs the LED brightness files to be
+writable, which the same rules file arranges.
+"""
+import glob
+import json
+import os
+import sys
+import time
+
+
+def config():
+    base = os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config')
+    try:
+        with open(os.path.join(base, 'ds4-tester', 'pads.json')) as fh:
+            return {k.upper(): v for k, v in json.load(fh).items()}
+    except (OSError, ValueError):
+        return {}
+
+
+def pad_info(hidraw):
+    """(MAC, led base path) for a hidraw node name like 'hidraw3'."""
+    dev = f'/sys/class/hidraw/{hidraw}/device'
+    uniq = None
+    with open(f'{dev}/uevent') as fh:
+        for line in fh:
+            if line.startswith('HID_UNIQ='):
+                uniq = line.split('=', 1)[1].strip().upper()
+    reds = glob.glob(f'{dev}/leds/*:red')
+    return uniq, (reds[0][:-len(':red')] if reds else None)
+
+
+def apply(hidraw, cfg, retries=10):
+    uniq, led = pad_info(hidraw)
+    rgb = cfg.get(uniq, {}).get('rgb') if uniq else None
+    if not rgb:
+        print(f'{hidraw} ({uniq}): no saved colour')
+        return True
+    vals = (int(rgb[0:2], 16), int(rgb[2:4], 16), int(rgb[4:6], 16))
+    for attempt in range(retries):
+        try:
+            for ch, v in zip(('red', 'green', 'blue'), vals):
+                with open(f'{led}:{ch}/brightness', 'w') as fh:
+                    fh.write(str(v))
+            print(f'{hidraw} ({uniq}): lightbar → #{rgb}')
+            return True
+        except (OSError, TypeError) as e:
+            # LEDs / the udev chmod can lag the hidraw node by a moment
+            err = e
+            time.sleep(0.5)
+    print(f'{hidraw} ({uniq}): failed: {err}', file=sys.stderr)
+    return False
+
+
+def main():
+    cfg = config()
+    if len(sys.argv) > 1:
+        # just connected: let the driver set its default colour first, then
+        # override it
+        time.sleep(2.0)
+        nodes = [os.path.basename(a) for a in sys.argv[1:]]
+    else:
+        nodes = sorted(os.path.basename(os.path.dirname(os.path.dirname(u)))
+                       for u in glob.glob('/sys/class/hidraw/hidraw*/device/uevent')
+                       if 'DRIVER=playstation' in open(u).read())
+    ok = all([apply(n, cfg) for n in nodes])
+    return 0 if ok else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

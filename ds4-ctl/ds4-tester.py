@@ -14,7 +14,9 @@ Buttons, sticks and rumble work as a normal desktop user. The touchpad
 device and sysfs LED writes are root-only by default: install
 70-ds4-tester.rules (instructions in the file) to open them up. Without it
 the touchpad view is disabled and the lightbar is set over hidraw instead.
-Custom pad names are stored per MAC in ~/.config/ds4-tester/names.json.
+Custom pad names and the last lightbar colour are stored per MAC in
+~/.config/ds4-tester/pads.json (ds4-lightbar-restore reapplies the colour
+on every reconnect).
 Needs python3-evdev and python3-cairo (pycairo).
 """
 import os
@@ -194,30 +196,36 @@ if evdev is not None:
                    E.BTN_TL: 'l1', E.BTN_TR: 'r1', E.BTN_TL2: 'l2', E.BTN_TR2: 'r2'}
 
 
-def config_path():
-    """~/.config/ds4-tester/names.json — the invoking user's, even under sudo."""
+def config_path(name='pads.json'):
+    """~/.config/ds4-tester/<name> — the invoking user's, even under sudo."""
     if os.geteuid() == 0 and os.environ.get('SUDO_USER'):
         import pwd
         base = os.path.join(pwd.getpwnam(os.environ['SUDO_USER']).pw_dir, '.config')
     else:
         base = os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config')
-    return os.path.join(base, 'ds4-tester', 'names.json')
+    return os.path.join(base, 'ds4-tester', name)
 
 
-def load_names():
+def load_pads():
+    """MAC -> {'name': str, 'rgb': 'rrggbb'} (either key optional)."""
     try:
         with open(config_path()) as fh:
             return {k.upper(): v for k, v in json.load(fh).items()}
     except (OSError, ValueError):
+        pass
+    try:    # earlier versions kept only names, in names.json
+        with open(config_path('names.json')) as fh:
+            return {k.upper(): {'name': v} for k, v in json.load(fh).items()}
+    except (OSError, ValueError):
         return {}
 
 
-def save_names(names):
+def save_pads(pads):
     path = config_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + '.tmp'
     with open(tmp, 'w') as fh:
-        json.dump(names, fh, indent=2, sort_keys=True)
+        json.dump({k: v for k, v in pads.items() if v}, fh, indent=2, sort_keys=True)
     os.replace(tmp, path)
     if os.geteuid() == 0 and os.environ.get('SUDO_UID'):
         # don't leave root-owned files in the user's config dir
@@ -273,7 +281,7 @@ class Tester(tk.Tk):
         self.icons = [tk.PhotoImage(data=base64.b64encode(art.icon_png(n)))
                       for n in (128, 64, 32)]
         self.iconphoto(True, *self.icons)
-        self.names = load_names()       # MAC -> user-chosen name
+        self.cfg = load_pads()          # MAC -> {'name', 'rgb'}
         self.rename_entry = None
         self.pads = find_pads()
         self.inp = self.blank_input()
@@ -285,6 +293,7 @@ class Tester(tk.Tk):
         self.bind('<Escape>', self.on_escape)
         self.timers = {'tick': self.after(POLL_MS, self.tick),
                        'slow': self.after(500, self.slow_tick)}
+        self.restore_colours()
         self.select_pad(0 if self.pads else None)
         if not self.pads:
             self.status('No DS4 controller found — connect one and press Refresh.')
@@ -403,7 +412,7 @@ class Tester(tk.Tk):
 
     def pad_name(self, idx):
         p = self.pads[idx]
-        return self.names.get(p['uniq']) or (
+        return self.cfg.get(p['uniq'], {}).get('name') or (
             'DS4 Clone' + (f' {idx + 1}' if len(self.pads) > 1 else ''))
 
     def set_title(self, text):
@@ -455,15 +464,16 @@ class Tester(tk.Tk):
             self.status('Rename cancelled')
             return
         mac = self.current['uniq']
+        entry = self.cfg.setdefault(mac, {})
         if text and text != self.pad_name(self.pads.index(self.current)):
-            self.names[mac] = text
+            entry['name'] = text
         elif not text:
-            self.names.pop(mac, None)
+            entry.pop('name', None)
         else:
             self.status('Name unchanged')
             return
         try:
-            save_names(self.names)
+            save_pads(self.cfg)
             self.status(f'Saved name for {mac} → {config_path()}')
         except OSError as err:
             self.status(f'Could not save name: {err}')
@@ -704,25 +714,43 @@ class Tester(tk.Tk):
         cd['buttons'].set('  '.join(names) or '—')
 
     # ---------------- LED + rumble actions
-    def set_led(self, hx):
-        if not self.current:
+    def set_led(self, hx, pad=None, remember=True):
+        pad = pad or self.current
+        if not pad:
             return
+        hx = hx.lower()
         r, g, b = int(hx[0:2], 16), int(hx[2:4], 16), int(hx[4:6], 16)
         try:
             for ch, v in (('red', r), ('green', g), ('blue', b)):
-                with open(f'{self.current["led_dir"]}:{ch}/brightness', 'w') as fh:
+                with open(f'{pad["led_dir"]}:{ch}/brightness', 'w') as fh:
                     fh.write(str(v))
             how = 'sysfs'
         except OSError:
             # sysfs LEDs are root-only; hidraw is usually open to the desktop user
-            if not send_hidraw(self.current, rgb=(r, g, b), flags=0x02):
+            if not send_hidraw(pad, rgb=(r, g, b), flags=0x02):
                 self.status('Lightbar write failed (needs root, or hidraw access)')
                 return
             how = 'hidraw'
-        self.current['rgb'] = [r, g, b]
-        self.update_info()
+        pad['rgb'] = [r, g, b]
+        if remember:
+            self.cfg.setdefault(pad['uniq'], {})['rgb'] = hx
+            try:
+                save_pads(self.cfg)
+            except OSError as err:
+                self.status(f'Lightbar set, but could not save it: {err}')
+                remember = False
+        if pad is self.current:
+            self.update_info()
         self.build_chips()
-        self.status(f'Lightbar → #{hx.upper()} ({how})')
+        self.status(f'Lightbar → #{hx.upper()} ({how})' + (' · remembered' if remember else ''))
+
+    def restore_colours(self):
+        """Reapply each pad's saved colour (covers pads that connected before
+        ds4-lightbar-restore was installed)."""
+        for p in self.pads:
+            saved = self.cfg.get(p['uniq'], {}).get('rgb')
+            if saved and saved != '%02x%02x%02x' % tuple(p['rgb']):
+                self.set_led(saved, pad=p, remember=False)
 
     def pick_led(self):
         if not self.current:
@@ -756,12 +784,13 @@ class Tester(tk.Tk):
         base = '%02x%02x%02x' % tuple(self.current['rgb'])
         seq = ['FF0000', '0000FF', 'FF0000', '0000FF', '00FF00', base]
         for i, hx in enumerate(seq):
-            self.after(300 * i, lambda x=hx: self.set_led(x))
+            self.after(300 * i, lambda x=hx: self.set_led(x, remember=False))
 
     def refresh(self):
         keep = self.current['uniq'] if self.current else None
         self.close_devs()
         self.pads = find_pads()
+        self.restore_colours()
         uniqs = [p['uniq'] for p in self.pads]
         if self.pads:
             self.select_pad(uniqs.index(keep) if keep in uniqs else 0)

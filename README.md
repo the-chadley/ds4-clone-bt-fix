@@ -14,6 +14,7 @@ bluez 5.87+git and kernel 7.2.x).
 | `ds4-ctl/ds4-tester.py` | Steam-style GUI tester: live button/stick/trigger/touchpad view, lightbar colours, rumble test, per-MAC pad names. Needs `python3-evdev` and `python3-cairo`. |
 | `ds4-ctl/ds4-fullmode` | Switches clone pads from the minimal Bluetooth report to the full one, which turns the touchpad (and motion) on. See below. |
 | `ds4-ctl/70-ds4-tester.rules` | udev rules: runs `ds4-fullmode` on every Bluetooth connect, and gives the desktop user access to the touchpad and lightbar LEDs. |
+| `ds4-ctl/ds4-lightbar-restore`, `ds4-ctl/ds4-lightbar@.service` | Put each pad's last chosen lightbar colour back when it reconnects (user service started by udev). |
 | `ds4-ctl/ds4led` | Command-line lightbar colour tool. |
 
 ## The short diagnosis
@@ -100,10 +101,21 @@ python3 ds4-ctl/ds4-tester.py --list   # just list connected pads
 
 - Every control lights up on the drawing as you press it, and the panels
   below show raw trigger, stick and touchpad values.
-- Click the pad's name to rename it. Names are remembered per MAC address in
-  `~/.config/ds4-tester/names.json`.
+- Click the pad's name to rename it. The name and the last lightbar colour
+  you picked are remembered per MAC address in `~/.config/ds4-tester/pads.json`.
 - **Rumble** runs the strong (left) motor, then the weak (right) motor.
 - **Identify** flashes the lightbar so you can tell which pad is which.
+
+The kernel resets the lightbar to a default colour on every connect. To get
+your saved colour back automatically, install the user service. It needs no
+root, and the udev rule above starts it on each connect:
+
+```bash
+cd ds4-ctl
+install -Dm 0755 ds4-lightbar-restore ~/.local/bin/ds4-lightbar-restore
+install -Dm 0644 ds4-lightbar@.service ~/.config/systemd/user/ds4-lightbar@.service
+systemctl --user daemon-reload
+```
 
 ## Status / KNOWN trade-offs
 

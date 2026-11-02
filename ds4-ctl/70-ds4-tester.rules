@@ -16,6 +16,11 @@
 # full report. 0005 = Bluetooth bus; over USB they already send full reports.
 ACTION=="add", SUBSYSTEM=="hidraw", KERNELS=="0005:054C:09CC.*", DRIVERS=="playstation", RUN+="/usr/local/bin/ds4-fullmode /dev/%k"
 
+# Restore the lightbar colour last picked in ds4-tester. This starts a *user*
+# service (ds4-lightbar@.service, installed per user, see that file) so it can
+# read ~/.config/ds4-tester/pads.json. Does nothing if the unit isn't installed.
+ACTION=="add", SUBSYSTEM=="hidraw", DRIVERS=="playstation", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="ds4-lightbar@%k.service"
+
 # Touchpad event node. Fedora already grants the gamepad node to the seat user
 # via "uaccess"; the touchpad isn't tagged as a joystick so it misses out.
 # Must sort before 73-seat-late.rules, which applies uaccess ACLs.

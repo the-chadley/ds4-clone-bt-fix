@@ -1,0 +1,15 @@
+# systemd *user* unit: restore a DS4 pad's saved lightbar colour on connect.
+# Started by udev (70-ds4-tester.rules, SYSTEMD_USER_WANTS) with the hidraw
+# node as the instance, e.g. ds4-lightbar@hidraw3.service.
+#
+# Install (no root needed):
+#   install -Dm 0755 ds4-lightbar-restore ~/.local/bin/ds4-lightbar-restore
+#   install -Dm 0644 ds4-lightbar@.service ~/.config/systemd/user/ds4-lightbar@.service
+#   systemctl --user daemon-reload
+
+[Unit]
+Description=Restore DS4 lightbar colour (%i)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/ds4-lightbar-restore %i
