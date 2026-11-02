@@ -14,6 +14,7 @@ bluez 5.87+git and kernel 7.2.x).
 | `ds4-ctl/ds4-tester.py` | Steam-style GUI tester: live button/stick/trigger/touchpad view, lightbar colours, rumble test, per-MAC pad names. Needs `python3-evdev` and `python3-cairo`. |
 | `ds4-ctl/ds4-fullmode` | Switches clone pads from the minimal Bluetooth report to the full one, which turns the touchpad (and motion) on. See below. |
 | `ds4-ctl/70-ds4-tester.rules` | udev rules: runs `ds4-fullmode` on every Bluetooth connect, and gives the desktop user access to the touchpad and lightbar LEDs. |
+| `ds4-ctl/install-user.sh` | Per-user install: application menu entry + icon, and the lightbar restore service. |
 | `ds4-ctl/ds4-lightbar-restore`, `ds4-ctl/ds4-lightbar@.service` | Put each pad's last chosen lightbar colour back when it reconnects (user service started by udev). |
 | `ds4-ctl/ds4led` | Command-line lightbar colour tool. |
 
@@ -106,16 +107,18 @@ python3 ds4-ctl/ds4-tester.py --list   # just list connected pads
 - **Rumble** runs the strong (left) motor, then the weak (right) motor.
 - **Identify** flashes the lightbar so you can tell which pad is which.
 
-The kernel resets the lightbar to a default colour on every connect. To get
-your saved colour back automatically, install the user service. It needs no
-root, and the udev rule above starts it on each connect:
+To add **DS4 Tester** to your application menu (System category) and get
+your saved lightbar colour back automatically on every reconnect, run the
+per-user installer. It needs no root:
 
 ```bash
-cd ds4-ctl
-install -Dm 0755 ds4-lightbar-restore ~/.local/bin/ds4-lightbar-restore
-install -Dm 0644 ds4-lightbar@.service ~/.config/systemd/user/ds4-lightbar@.service
-systemctl --user daemon-reload
+ds4-ctl/install-user.sh              # ./install-user.sh --uninstall to remove
 ```
+
+It installs the menu entry and icon, plus a small user service
+(`ds4-lightbar@.service`). The udev rule above starts that service each time
+a pad connects, and it reapplies the colour you last picked, since the kernel
+resets the lightbar to a default colour on connect.
 
 ## Status / KNOWN trade-offs
 
